@@ -1,0 +1,6 @@
+output/*.mat
+output/*.png
+output/*.csv
+*.asv
+*.m~
+.DS_Store
