@@ -16,9 +16,9 @@ function geometry = geometry_metrics(cfg, plan)
     for iShot = 1:numel(plan.sx)
         for iReceiver = 1:numel(plan.rx)
             midpoint = (plan.sx(iShot) + plan.rx(iReceiver)) / 2;
-            iCMP = find(abs(cmpPositions - midpoint) < 1e-8, 1);
+            iCMP = cmp_bin_index(midpoint, cmpPositions, cfg.cmpBinWidth);
 
-            if isempty(iCMP)
+            if iCMP == 0
                 continue;
             end
 
@@ -71,4 +71,8 @@ function geometry = geometry_metrics(cfg, plan)
     geometry.pass = ...
         geometry.minFold >= cfg.minFold && ...
         geometry.minKinds >= cfg.minUsableKinds;
+    reasons = {};
+    if geometry.minFold < cfg.minFold, reasons{end+1} = 'fold below minimum'; end
+    if geometry.minKinds < cfg.minUsableKinds, reasons{end+1} = 'offset diversity below minimum'; end
+    geometry.failReason = strjoin(reasons, '; ');
 end

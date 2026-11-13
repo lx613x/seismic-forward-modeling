@@ -37,13 +37,13 @@ function test_plot_tabs()
     example.tEvent = 0.60;
     quality(2).sample = example;
 
-    scores.pass = logical([0, 1, 1, 0]);
+    scores.pass = false(1, nPlan); scores.pass(2:3) = true;
     scores.winner = 2;
-    scores.qualityScore = [0, 0.70, 0.65, 0];
-    scores.geometryScore = [0, 0.90, 0.86, 0];
-    scores.costScore = [0, 1.00, 0.90, 0];
-    scores.score = [-inf, 0.78, 0.73, -inf];
-    scores.cost = [63375, 65125, 69585, 69585];
+    scores.qualityScore = zeros(1, nPlan); scores.qualityScore(2:3) = [0.70, 0.65];
+    scores.geometryScore = zeros(1, nPlan); scores.geometryScore(2:3) = [0.90, 0.86];
+    scores.costScore = zeros(1, nPlan); scores.costScore(2:3) = [1, 0.90];
+    scores.score = -inf(1, nPlan); scores.score(2:3) = [0.78, 0.73];
+    scores.cost = 69585 * ones(1, nPlan); scores.cost(2) = 65125;
 
     % Synthetic snapshot fixture exercises the final wavefield tab without
     % performing a finite-difference simulation.
@@ -59,8 +59,8 @@ function test_plot_tabs()
     assert(numel(fig) == 1, '图表应只出现一个结果弹窗。');
     tabGroup = findall(fig, 'Type', 'uitabgroup');
     assert(numel(tabGroup) == 1, '结果弹窗应包含一个标签页组。');
-    assert(numel(tabGroup.Children) == 10, ...
-        '应该有10个标签页，包括速度扫描、NMO校正后及中心炮快照。');
+    assert(numel(tabGroup.Children) == 14, ...
+        '应有14个标签页，包括覆盖、无噪和反射增强。');
     assert(exist(fullfile(outputDir, '01_velocity_model.png'), 'file') == 2, ...
         '速度模型PNG未成功导出。');
 

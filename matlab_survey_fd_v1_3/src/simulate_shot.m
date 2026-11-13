@@ -27,6 +27,10 @@ function [gather, snapshots] = simulate_shot(op, sourceX, receiverX)
     assert(all(abs(cfg.x(receiverGridX) - receiverX) < 1e-7), ...
         'Receiver positions must be on grid nodes.');
 
+    assert(abs(cfg.z(sourceGridZ) - cfg.sourceZ) < 1e-7 && ...
+        abs(cfg.z(receiverGridZ) - cfg.receiverZ) < 1e-7, ...
+        'Source and receiver depths must be on grid nodes.');
+
     % Offset the indices by the external sponge width.
     sourceGridX = sourceGridX + op.nb;
     receiverGridX = receiverGridX + op.nb;

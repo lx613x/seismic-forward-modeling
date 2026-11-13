@@ -123,6 +123,13 @@ function run_tests()
     assert(all(scores.qualityScore >= 0 & scores.qualityScore <= 1));
     assert(~isempty(scores.winner));
 
+    test_external_model();
+    test_cmp_binning();
+    test_dense_acquisition();
+    test_nmo_mask();
+    test_reflection_visibility();
+    test_cache_consistency();
+
     fprintf(['ALL TESTS PASSED: grid, lenses, geometry, ' ...
         'FD reciprocity, delayed NMO, centre snapshots, scoring.\n']);
 end

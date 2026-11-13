@@ -10,10 +10,13 @@ function cfg = default_config(mode)
     if nargin < 1
         mode = 'quick';
     end
-    assert(any(strcmp(mode, {'quick', 'full'})), ...
-        'Mode must be ''quick'' or ''full''.');
+    assert(any(strcmp(mode, {'quick', 'dense', 'full'})), ...
+        'Mode must be ''quick'', ''dense'' or ''full''.');
 
     cfg.mode = mode;
+    cfg.modelFile = '';       % 空字符串使用内置模型；否则读取 MAT
+    cfg.targetTime = [];       % 外部模型必须指定含震源延迟的零偏移距时间 (s)
+    cfg.cmpBinWidth = 25;      % CMP bin [中心-宽/2, 中心+宽/2) (m)
 
     %% 1. Physical grid and numerical model
     cfg.dx = 10;                 % Grid spacing in x (m)
@@ -71,7 +74,7 @@ function cfg = default_config(mode)
     cfg.Ctrace = 5;
 
     %% 8. Survey extent
-    if strcmp(mode, 'quick')
+    if any(strcmp(mode, {'quick', 'dense'}))
         cfg.cmpPos = 200:25:800;
         cfg.qualityCMP = 200:100:800;
     else
