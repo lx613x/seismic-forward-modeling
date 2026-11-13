@@ -1,5 +1,5 @@
-function [stack, correctedGather] = nmo_stack( ...
-    gather, time, offsets, velocity, sourceDelay)
+function [stack, correctedGather, valid, counts] = nmo_stack( ...
+    gather, time, offsets, velocity, sourceDelay, maxStretch)
 %NMO_STACK Hyperbolic NMO with a shifted source-time origin, then stack.
 %
 % Input/Output:
@@ -18,6 +18,10 @@ function [stack, correctedGather] = nmo_stack( ...
         sourceDelay = 0;  % Preserve existing zero-delay tests.
     end
 
+    if nargin < 6 || isempty(maxStretch)
+        maxStretch = inf; % 兼容旧接口；评价时显式传入配置值
+    end
+    assert(isscalar(maxStretch) && maxStretch >= 0, 'Invalid stretch threshold.');
     time = double(time(:));
     offsets = double(offsets(:).');
     nTrace = numel(offsets);
@@ -46,6 +50,11 @@ function [stack, correctedGather] = nmo_stack( ...
                 travelTime.^2 + (offset / velocity)^2);
         end
 
+        if abs(offset) >= 1e-12 && isfinite(maxStretch)
+            tau = time - sourceDelay;
+            stretch = (inputTime - time) ./ max(tau, eps);
+            inputTime(tau <= 0 | stretch > maxStretch) = NaN;
+        end
         validTime = isfinite(inputTime) & ...
             inputTime >= time(1) & inputTime <= time(end);
         if any(validTime)

@@ -4,3 +4,4 @@ output/*.csv
 *.asv
 *.m~
 .DS_Store
+output/shot_cache/

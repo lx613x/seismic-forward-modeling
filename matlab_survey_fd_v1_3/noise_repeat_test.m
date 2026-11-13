@@ -26,7 +26,7 @@ function noise_repeat_test(numRepeat, mode)
         mkdir(cfg.outputDir);
     end
 
-    model = build_velocity(cfg);
+    model = load_velocity_model(cfg, root);
     propagator = prepare_fd(cfg, model);
     plans = cfg.plans;
     numPlans = numel(plans);
@@ -39,14 +39,12 @@ function noise_repeat_test(numRepeat, mode)
     [shotX, receiverX, cleanShots] = load_or_simulate_shots( ...
         cfg, model, propagator, plans);
 
-    noiseStd = cfg.noiseFraction * double(max(abs(cleanShots(:))));
+    noiseStd = cfg.noiseFraction * cleanShots.peak;
     repeatedScores = NaN(numRepeat, numPlans);
 
     for iRepeat = 1:numRepeat
-        rng(cfg.randomSeed + iRepeat - 1, 'twister');
-
-        noisyShots = cleanShots + single(noiseStd) * ...
-            randn(size(cleanShots), 'single');
+        noisyShots = struct('noiseStd', noiseStd, ...
+            'seed', cfg.randomSeed + iRepeat - 1);
 
         quality = evaluate_all_plans( ...
             cfg, model, plans, geometry, shotX, receiverX, ...

@@ -39,6 +39,7 @@ function model = build_velocity(cfg)
     v(highLens) = 3300;
 
     %% 5. Return model structure
+    model.source = '内置复杂模型';
     model.v = v;
     model.x = x;
     model.z = z;

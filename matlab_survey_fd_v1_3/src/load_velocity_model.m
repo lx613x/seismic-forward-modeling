@@ -1,0 +1,49 @@
+function model = load_velocity_model(cfg, projectRoot)
+%LOAD_VELOCITY_MODEL 加载内置模型或严格匹配配置网格的外部 MAT 模型。
+% 不裁剪、不插值、不外推。坐标单位 m，速度单位 m/s。
+    if isempty(cfg.modelFile)
+        model = build_velocity(cfg);
+        return;
+    end
+    path = char(cfg.modelFile);
+    if ~isfile(path)
+        path = fullfile(projectRoot, path);
+    end
+    assert(isfile(path), 'External model file not found: %s', cfg.modelFile);
+    [~, ~, extension] = fileparts(path);
+    assert(strcmpi(extension, '.mat'), 'Only MAT velocity models are supported.');
+    data = load(path);
+    if isfield(data, 'model') && isstruct(data.model)
+        model = data.model;
+    else
+        model = data;
+    end
+    assert(all(isfield(model, {'v', 'x', 'z'})), 'Model requires v, x and z.');
+    assert(isnumeric(model.v) && isreal(model.v) && ismatrix(model.v) && ...
+        isnumeric(model.x) && isreal(model.x) && isvector(model.x) && ...
+        isnumeric(model.z) && isreal(model.z) && isvector(model.z), ...
+        'v must be a real matrix and x, z must be real vectors.');
+    model.x = double(model.x(:).');
+    model.z = double(model.z(:).');
+    assert(numel(model.x) >= 2 && numel(model.z) >= 2 && ...
+        all(isfinite(model.x)) && all(isfinite(model.z)) && ...
+        all(diff(model.x) > 0) && all(diff(model.z) > 0), ...
+        'Model coordinates must be finite and strictly increasing.');
+    assert(isequal(size(model.v), [numel(model.z), numel(model.x)]), ...
+        'size(v) must equal [numel(z), numel(x)].');
+    assert(all(isfinite(model.v(:))) && all(model.v(:) > 0), ...
+        'Velocities must be finite and positive.');
+    tol = 1e-7 * max([1, abs(cfg.x(:).'), abs(cfg.z(:).')]);
+    assert(numel(model.x) == numel(cfg.x) && numel(model.z) == numel(cfg.z) && ...
+        all(abs(model.x - cfg.x(:).') <= tol) && ...
+        all(abs(model.z - cfg.z(:).') <= tol), ...
+        'External coordinates must exactly match cfg.x and cfg.z; no interpolation is performed.');
+    assert(all(abs(diff(model.x) - cfg.dx) <= tol) && ...
+        all(abs(diff(model.z) - cfg.dz) <= tol), 'Grid spacing must match dx and dz.');
+    assert(~isempty(cfg.targetTime) && isscalar(cfg.targetTime) && ...
+        isfinite(cfg.targetTime) && cfg.targetTime > cfg.sourceDelay && ...
+        cfg.targetTime + cfg.stackHalfWindow < cfg.tmax, ...
+        'External model requires cfg.targetTime (record time including source delay) within the record.');
+    model.v = single(model.v);
+    model.source = path;
+end

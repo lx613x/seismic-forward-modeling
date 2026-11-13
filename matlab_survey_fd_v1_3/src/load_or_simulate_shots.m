@@ -1,82 +1,53 @@
-function [shotX, receiverX, cleanShots] = load_or_simulate_shots( ...
-    cfg, model, propagator, plans)
-%LOAD_OR_SIMULATE_SHOTS Validate cached FD results or run unique shots.
-%
-% Cache hits require the entire velocity matrix and all source/receiver
-% positions to match; changing only score weights does not rerun the FD.
-
+function [shotX, receiverX, data] = load_or_simulate_shots(cfg, model, propagator, plans)
+%LOAD_OR_SIMULATE_SHOTS 按炮缓存；每炮仅存一次，CMP 按需读取。
+% 缓存比较完整模型和全部影响求解的参数，避免统计摘要碰撞。
     shotX = unique([plans.sx]);
     receiverX = unique([plans.rx]);
     nt = numel(propagator.time);
-
-    cacheFile = fullfile(cfg.outputDir, 'forward_data.mat');
-
-    % Scalar signature plus exact model and coordinate arrays.
-    signature = [numel(cfg.x), numel(cfg.z), cfg.dx, cfg.dz, ...
-        cfg.dt, cfg.tmax, cfg.nb, cfg.sigmaMax, cfg.f0, ...
-        cfg.sourceDelay, cfg.sourceZ, cfg.receiverZ, ...
-        sum(double(model.v(:))), sum(double(model.v(:)).^2)];
-
-    cacheIsValid = false;
-    if cfg.useDiskCache && exist(cacheFile, 'file')
-        previous = load(cacheFile);
-        % Support both tidy v1.1 keys and original v1 cache field names.
-        if isfield(previous, 'receiverX') && ...
-                isfield(previous, 'cleanShots')
-            cachedReceiverX = previous.receiverX;
-            cachedShots = previous.cleanShots;
-        elseif isfield(previous, 'rxAll') && ...
-                isfield(previous, 'shotsClean')
-            cachedReceiverX = previous.rxAll;
-            cachedShots = previous.shotsClean;
+    validate_acquisition(cfg, plans);
+    bytes = 4 * double(nt) * numel(receiverX) * numel(shotX);
+    fprintf('[FD] %d shots, %d receivers; raw single records %.1f MiB on disk.\n', ...
+        numel(shotX), numel(receiverX), bytes / 2^20);
+    fprintf('[FD] At most one shot record is loaded per CMP extraction.\n');
+    if cfg.useDiskCache && cfg.saveShots
+        cacheDir = fullfile(cfg.outputDir, 'shot_cache');
+    else
+        cacheDir = tempname;
+    end
+    if ~exist(cacheDir, 'dir'), mkdir(cacheDir); end
+    signature = [cfg.dx, cfg.dz, cfg.dt, cfg.tmax, cfg.nb, cfg.sigmaMax, ...
+        cfg.f0, cfg.sourceDelay, cfg.sourceZ, cfg.receiverZ];
+    cacheModel = model.v; cacheX = cfg.x; cacheZ = cfg.z;
+    files = cell(1, numel(shotX));
+    peak = 0;
+    for k = 1:numel(shotX)
+        gridIndex = round((shotX(k) - cfg.x(1)) / cfg.dx);
+        files{k} = fullfile(cacheDir, sprintf('shot_%07d.mat', gridIndex));
+        valid = false;
+        if cfg.useDiskCache && cfg.saveShots && exist(files{k}, 'file')
+            try
+                old = load(files{k});
+                required = {'shot', 'record', 'signature', 'cacheModel', 'cacheX', 'cacheZ', 'receiverX'};
+                valid = all(isfield(old, required)) && isequal(old.shot, shotX(k)) && ...
+                    isequal(old.signature, signature) && isequal(old.cacheModel, cacheModel) && ...
+                    isequal(old.cacheX, cacheX) && isequal(old.cacheZ, cacheZ) && ...
+                    isequal(old.receiverX, receiverX) && ...
+                    isequal(size(old.record), [nt, numel(receiverX)]) && all(isfinite(old.record(:)));
+            catch
+                valid = false;
+            end
+        end
+        if valid
+            record = old.record;
         else
-            cachedReceiverX = [];
-            cachedShots = [];
+            fprintf('[FD] Simulating shot %d/%d at x=%g m.\n', k, numel(shotX), shotX(k));
+            shot = shotX(k);
+            record = simulate_shot(propagator, shot, receiverX);
+            save(files{k}, 'shot', 'record', 'signature', 'cacheModel', ...
+                'cacheX', 'cacheZ', 'receiverX', '-v7');
         end
-
-        requiredFields = {'signature', 'shotX', 'cacheModel', ...
-            'cacheX', 'cacheZ'};
-
-        if all(isfield(previous, requiredFields)) && ~isempty(cachedShots)
-            expectedSize = [nt, numel(receiverX), numel(shotX)];
-            cacheIsValid = isequal(previous.signature, signature) && ...
-                isequal(previous.shotX, shotX) && ...
-                isequal(cachedReceiverX, receiverX) && ...
-                isequal(previous.cacheX, cfg.x) && ...
-                isequal(previous.cacheZ, cfg.z) && ...
-                isequal(previous.cacheModel, model.v) && ...
-                isequal(size(cachedShots), expectedSize);
-        end
+        peak = max(peak, double(max(abs(record(:)))));
     end
-
-    if cacheIsValid
-        fprintf('[FD] Validated cache found: reusing %d shots.\n', ...
-            numel(shotX));
-        cleanShots = cachedShots;
-        return;
-    end
-
-    fprintf('[FD] Simulating %d unique shots on %d x %d grid.\n', ...
-        numel(shotX), numel(cfg.x), numel(cfg.z));
-
-    cleanShots = zeros(nt, numel(receiverX), numel(shotX), 'single');
-
-    for iShot = 1:numel(shotX)
-        fprintf('[FD] Shot %3d/%3d | x = %g m\n', ...
-            iShot, numel(shotX), shotX(iShot));
-
-        % Snapshot computation is handled independently by
-        % save_center_snapshots, not by the first acquisition shot.
-        cleanShots(:, :, iShot) = simulate_shot( ...
-            propagator, shotX(iShot), receiverX);
-    end
-
-    if cfg.saveShots
-        cacheModel = model.v;
-        cacheX = cfg.x;
-        cacheZ = cfg.z;
-
-        save(cacheFile, 'signature', 'shotX', 'receiverX', ...
-            'cleanShots', 'cacheModel', 'cacheX', 'cacheZ', '-v7');
-    end
+    data = struct('files', {files}, 'peak', peak, 'nt', nt, ...
+        'gridOrigin', cfg.x(1), 'dx', cfg.dx, 'gridCount', numel(cfg.x));
 end

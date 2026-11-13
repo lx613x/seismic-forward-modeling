@@ -39,17 +39,18 @@ function plot_summary(cfg, model, plans, geometry, quality, scores, time)
     imagesc(ax, model.x, model.z, double(model.v));
     set(ax, 'YDir', 'reverse');
     axis(ax, 'tight');
-    caxis(ax, [1500, 3300]);
+    vmin = double(min(model.v(:))); vmax = double(max(model.v(:)));
+    if vmax > vmin, caxis(ax, [vmin, vmax]); end
     colormap(ax, parula);
     cb = colorbar(ax);
     cb.Label.String = '速度 (m/s)';
     hold(ax, 'on');
-    plot(ax, model.x, model.h1, 'k:', 'LineWidth', 1);
-    plot(ax, model.x, model.h2, 'k:', 'LineWidth', 1);
-    plot(ax, model.x, model.h3, 'k:', 'LineWidth', 1);
-    line(ax, [1300, 1300], [min(model.z), max(model.z)], ...
-        'Color', 'w', 'LineStyle', '--', 'LineWidth', 1.3);
-    text(ax, 1315, 115, '断层', 'Color', 'w', 'FontSize', 11);
+    for k = 1:3
+        field = sprintf('h%d', k);
+        if isfield(model, field) && numel(model.(field)) == numel(model.x)
+            plot(ax, model.x, model.(field), 'k:', 'LineWidth', 1);
+        end
+    end
     % The marked centre shot is only used for the wavefield snapshots.
     if isfield(cfg, 'snapshotShotX')
         plot(ax, cfg.snapshotShotX, cfg.sourceZ, 'rp', ...
@@ -60,7 +61,9 @@ function plot_summary(cfg, model, plans, geometry, quality, scores, time)
     hold(ax, 'off');
     xlabel(ax, '水平距离 (m)');
     ylabel(ax, '深度 (m)');
-    title(ax, '复杂二维声波速度模型');
+    if isfield(model, 'source'), modelLabel = model.source; else, modelLabel = '模型'; end
+    title(ax, sprintf('速度模型：%s', modelLabel), 'Interpreter', 'none');
+    axis(ax, 'equal'); axis(ax, 'tight');
     export_chart(ax, fig, tabGroup, tabModel, outputDir, '01_velocity_model.png');
 
     %% 标签2：CMP覆盖次数
@@ -79,6 +82,19 @@ function plot_summary(cfg, model, plans, geometry, quality, scores, time)
     grid(ax, 'on');
     hold(ax, 'off');
     export_chart(ax, fig, tabGroup, tabFold, outputDir, '02_cmp_folds.png');
+
+    tabCoverage = uitab('Parent', tabGroup, 'Title', 'CMP偏移距');
+    ax = make_axes(tabCoverage); hold(ax, 'on');
+    chosen = 1;
+    if ~isempty(scores.winner), chosen = scores.winner; end
+    for i = 1:numel(geometry(chosen).cmp)
+        offsets = geometry(chosen).allOffsets{i};
+        plot(ax, geometry(chosen).cmp(i) * ones(size(offsets)), offsets, 'k.', 'MarkerSize', 5);
+    end
+    xlabel(ax, 'CMP bin 中心 (m)'); ylabel(ax, '绝对炮检距 (m)');
+    title(ax, sprintf('%s：真实炮检组合覆盖', plans(chosen).name), 'Interpreter', 'none');
+    grid(ax, 'on'); hold(ax, 'off');
+    export_chart(ax, fig, tabGroup, tabCoverage, outputDir, '11_cmp_offset.png');
 
     %% 标签3：综合评分
     tabScores = uitab('Parent', tabGroup, 'Title', '综合评分');
@@ -135,30 +151,59 @@ function plot_summary(cfg, model, plans, geometry, quality, scores, time)
         export_chart(ax, fig, tabGroup, tabGather, ...
             outputDir, '04_cmp_gather.png');
 
+        if isfield(example, 'clean')
+            cleanGather = double(example.clean);
+        else
+            cleanGather = double(example.noisy); % 绘图测试兼容旧示例
+        end
+        tabClean = uitab('Parent', tabGroup, 'Title', '无噪CMP');
+        ax = make_axes(tabClean);
+        imagesc(ax, 1:numel(example.offset), time, cleanGather);
+        set(ax, 'YDir', 'reverse'); colormap(ax, gray); caxis(ax, [-amplitudeLimit, amplitudeLimit]);
+        set_offset_ticks(ax, example.offset); xlabel(ax, '有符号炮检距 (m)'); ylabel(ax, '时间 (s)');
+        title(ax, sprintf('CMP %g m：无噪声原始振幅', example.cmp));
+        export_chart(ax, fig, tabGroup, tabClean, outputDir, '12_clean_cmp.png');
+
+        tabEnhanced = uitab('Parent', tabGroup, 'Title', '反射增强');
+        ax = make_axes(tabEnhanced);
+        displayGather = reflection_display(example.noisy, time, example.tEvent, cfg.stackHalfWindow);
+        imagesc(ax, 1:numel(example.offset), time, displayGather);
+        set(ax, 'YDir', 'reverse'); colormap(ax, gray); caxis(ax, [-1, 1]);
+        set_offset_ticks(ax, example.offset); hold(ax, 'on');
+        plot(ax, 1:numel(example.offset), referenceTime, 'r--', 'LineWidth', 1.3);
+        directTime = cfg.sourceDelay + abs(double(example.offset)) / cfg.geomV1;
+        plot(ax, 1:numel(example.offset), directTime, 'b:', 'LineWidth', 1.2);
+        yline(ax, example.tEvent - cfg.stackHalfWindow, 'r:');
+        yline(ax, example.tEvent + cfg.stackHalfWindow, 'r:'); hold(ax, 'off');
+        xlabel(ax, '有符号炮检距 (m)'); ylabel(ax, '时间 (s)');
+        title(ax, '目标窗逐道归一化（仅显示）；红：近似反射，蓝：均匀介质直达波');
+        export_chart(ax, fig, tabGroup, tabEnhanced, outputDir, '13_reflection_display.png');
+
         %% 标签5：相干速度扫描（并非二维速度谱）
         tabVelocity = uitab('Parent', tabGroup, 'Title', '速度扫描');
         ax = make_axes(tabVelocity);
-        plot(ax, cfg.velocityGrid, example.sem, ...
-            'b-o', 'LineWidth', 1.6);
-        hold(ax, 'on');
-        xline(ax, example.vPick, 'r--', ...
-            sprintf('拾取：%g m/s', example.vPick), ...
-            'LineWidth', 1.2);
-        xlabel(ax, '候选NMO速度 (m/s)');
-        ylabel(ax, '时间窗相干系数');
-        title(ax, sprintf('CMP = %g m：参考时间 %.3f s 的速度扫描', ...
-            example.cmp, example.tEvent));
-        ylim(ax, [0, 1.05]);
-        grid(ax, 'on');
-        hold(ax, 'off');
+        scanTimes = linspace(max(cfg.sourceDelay + cfg.scanHalfWindow + 0.001, ...
+            example.tEvent - 0.15), min(time(end) - cfg.scanHalfWindow, example.tEvent + 0.15), 31);
+        spectrum = zeros(numel(scanTimes), numel(cfg.velocityGrid));
+        for k = 1:numel(scanTimes)
+            spectrum(k, :) = semblance_scan(example.noisy, time, example.offset, ...
+                scanTimes(k), cfg.velocityGrid, cfg.scanHalfWindow, cfg.sourceDelay);
+        end
+        imagesc(ax, cfg.velocityGrid, scanTimes, spectrum);
+        set(ax, 'YDir', 'reverse'); colormap(ax, parula); caxis(ax, [0, 1]); colorbar(ax);
+        hold(ax, 'on'); xline(ax, example.vPick, 'r--');
+        yline(ax, example.tEvent, 'w--'); hold(ax, 'off');
+        xlabel(ax, '候选NMO速度 (m/s)'); ylabel(ax, '零偏移距记录时间 (s)');
+        title(ax, sprintf('CMP %g m：时间-速度相干谱；拾取 %g m/s', example.cmp, example.vPick));
         export_chart(ax, fig, tabGroup, tabVelocity, ...
             outputDir, '05_velocity_scan.png');
 
         %% 标签6：NMO校正后的CMP道集
         tabNMO = uitab('Parent', tabGroup, 'Title', 'NMO校正后');
         ax = make_axes(tabNMO);
-        imagesc(ax, 1:numel(example.offset), time, double(example.nmo));
-        set(ax, 'YDir', 'reverse');
+        imageHandle = imagesc(ax, 1:numel(example.offset), time, double(example.nmo));
+        set(imageHandle, 'AlphaData', isfinite(example.nmo));
+        set(ax, 'Color', [0.82 0.82 0.82], 'YDir', 'reverse');
         colormap(ax, gray);
         caxis(ax, [-amplitudeLimit, amplitudeLimit]);
         cb = colorbar(ax);
@@ -170,7 +215,7 @@ function plot_summary(cfg, model, plans, geometry, quality, scores, time)
         hold(ax, 'off');
         xlabel(ax, '有符号炮检距 (m)');
         ylabel(ax, '时间 (s)');
-        title(ax, sprintf('CMP = %g m：NMO校正后道集（未做拉伸切除）', ...
+        title(ax, sprintf('CMP = %g m：NMO校正后道集（灰色：无效或拉伸切除）', ...
             example.cmp));
         export_chart(ax, fig, tabGroup, tabNMO, ...
             outputDir, '06_nmo_corrected_gather.png');
@@ -289,21 +334,37 @@ function plot_summary(cfg, model, plans, geometry, quality, scores, time)
             for iSnap = 1:nSnap
                 ax = nexttile(layout);
                 wave = double(snapshots.wave(:, :, iSnap));
+                % 逐帧压缩增强：用于辨认波前，不比较时刻间物理幅度。
+                scale = max(abs(wave(:)));
+                if scale > 0, wave = sign(wave) .* sqrt(abs(wave) / scale); end
                 imagesc(ax, model.x, model.z, wave);
                 set(ax, 'YDir', 'reverse');
-                axis(ax, 'tight');
+                axis(ax, 'equal'); axis(ax, 'tight');
                 maxAmp = max(abs(wave(:)));
                 if maxAmp > 0
                     caxis(ax, [-maxAmp, maxAmp]);
                 end
                 colormap(ax, gray);
-                title(ax, sprintf('炮点 %g m，传播时间 %.2f s', ...
+                title(ax, sprintf('炮点 %g m，%.2f s（逐帧归一化+平方根）', ...
                     snapshots.shot, snapshots.time(iSnap)));
                 xlabel(ax, '水平距离 (m)');
                 ylabel(ax, '深度 (m)');
             end
             export_chart(layout, fig, tabGroup, tabWave, ...
                 outputDir, '10_wavefield_snapshots.png');
+            tabRaw = uitab('Parent', tabGroup, 'Title', '波场原始振幅');
+            rawLayout = tiledlayout(tabRaw, 2, cols, 'TileSpacing', 'compact', 'Padding', 'compact');
+            globalAmp = double(max(abs(snapshots.wave(:))));
+            for iSnap = 1:nSnap
+                ax = nexttile(rawLayout);
+                imagesc(ax, model.x, model.z, double(snapshots.wave(:, :, iSnap)));
+                set(ax, 'YDir', 'reverse'); axis(ax, 'equal'); axis(ax, 'tight');
+                if globalAmp > 0, caxis(ax, [-globalAmp, globalAmp]); end
+                colormap(ax, gray);
+                title(ax, sprintf('%.2f s（统一物理振幅标尺）', snapshots.time(iSnap)));
+                xlabel(ax, '水平距离 (m)'); ylabel(ax, '深度 (m)');
+            end
+            export_chart(rawLayout, fig, tabGroup, tabRaw, outputDir, '14_wavefield_raw.png');
         end
     end
 

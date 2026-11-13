@@ -1,4 +1,4 @@
-function run_project(mode)
+function run_project(mode, overrides)
 %RUN_PROJECT Run 2-D acoustic forward modelling and survey comparison.
 %
 %   run_project()        : quick verification (CMP 200-800 m)
@@ -21,6 +21,17 @@ function run_project(mode)
     addpath(fullfile(projectRoot, 'src'));
 
     cfg = default_config(mode);
+    if nargin >= 2 && ~isempty(overrides)
+        names = fieldnames(overrides);
+        for k = 1:numel(names)
+            assert(isfield(cfg, names{k}), 'Unknown configuration field: %s', names{k});
+            cfg.(names{k}) = overrides.(names{k});
+        end
+    end
+    assert(all(cfg.weights >= 0) && abs(sum(cfg.weights)-1) < 1e-10 && ...
+        all(cfg.qWeights >= 0) && abs(sum(cfg.qWeights)-1) < 1e-10 && ...
+        all(cfg.gWeights >= 0) && abs(sum(cfg.gWeights)-1) < 1e-10, ...
+        'All weights must be nonnegative and sum to one.');
     if ~exist(cfg.outputDir, 'dir')
         mkdir(cfg.outputDir);
     end
@@ -32,12 +43,17 @@ function run_project(mode)
     fprintf('%s\n', repmat('=', 1, 65));
 
     % Phase 1: Model and precomputed propagator.
-    model = build_velocity(cfg);
+    model = load_velocity_model(cfg, projectRoot);
+    cfg.snapshotShotX = (model.x(1) + model.x(end)) / 2;
+    assert(abs((cfg.snapshotShotX - model.x(1)) / cfg.dx - ...
+        round((cfg.snapshotShotX - model.x(1)) / cfg.dx)) < 1e-7, ...
+        'Model centre must lie on a grid node for snapshots.');
     save(fullfile(cfg.outputDir, 'velocity_model.mat'), 'model', '-v7');
     propagator = prepare_fd(cfg, model);
 
     % Phase 2: CMP geometry, independent of the seismic traces.
     plans = cfg.plans;
+    validate_acquisition(cfg, plans);
     numPlans = numel(plans);
     geometry = repmat(geometry_metrics(cfg, plans(1)), 1, numPlans);
 
@@ -53,13 +69,9 @@ function run_project(mode)
     % It does not affect the acquisition layouts or the FD shot cache.
     save_center_snapshots(cfg, model, propagator);
 
-    peakAmplitude = max(abs(cleanShots(:)));
-    noiseStd = cfg.noiseFraction * double(peakAmplitude);
-    noisyShots = cleanShots + single(noiseStd) * ...
-        randn(size(cleanShots), 'single');
-
-    save(fullfile(cfg.outputDir, 'noisy_data.mat'), ...
-        'noisyShots', 'noiseStd', '-v7');
+    noiseStd = cfg.noiseFraction * cleanShots.peak;
+    noisyShots = struct('noiseStd', noiseStd, 'seed', cfg.randomSeed);
+    fprintf('[NOISE] 逐道确定性噪声标准差 %.6g；相同炮检组合共享噪声。\n', noiseStd);
 
     % Phase 4: Waveform metrics for feasible plans only.
     quality = evaluate_all_plans( ...
